@@ -5,6 +5,8 @@
 
 import abc
 import contextlib
+import inspect
+import warnings
 from enum import Enum
 from itertools import chain
 from typing import Callable, List, Optional, Sequence, Tuple, Union, cast
@@ -338,7 +340,12 @@ class AutoDiffCostFunction(CostFunction):
         batch_size = max(batch_sizes)
         optim_tensors = _expand_all(optim_tensors, batch_size)
         aux_tensors = _expand_all(aux_tensors, batch_size)
-        return vmap(jacrev(jac_fn, argnums=0))(optim_tensors, aux_tensors)
+        vmap_kwargs = (
+            {"randomness": "same"} if "randomness" in inspect.signature(vmap).parameters else {}
+        )
+        return vmap(jacrev(jac_fn, argnums=0), **vmap_kwargs)(
+            optim_tensors, aux_tensors
+        )
 
     def jacobians(self) -> Tuple[List[torch.Tensor], torch.Tensor]:
         err, optim_vars, aux_vars = self._compute_error()
@@ -352,11 +359,41 @@ class AutoDiffCostFunction(CostFunction):
             # had before entering and restores them on exit, thus dereferencing
             # the temporary BatchedTensors.
             with _tmp_tensors(self._tmp_optim_vars), _tmp_tensors(self._tmp_aux_vars):
-                jacobians_full = self._compute_autograd_jacobian_vmap(
-                    tuple(v.tensor for v in optim_vars),
-                    tuple(v.tensor for v in aux_vars),
-                    self._make_jac_fn_vmap(self._tmp_optim_vars, self._tmp_aux_vars),
-                )
+                try:
+                    jacobians_full = self._compute_autograd_jacobian_vmap(
+                        tuple(v.tensor for v in optim_vars),
+                        tuple(v.tensor for v in aux_vars),
+                        self._make_jac_fn_vmap(self._tmp_optim_vars, self._tmp_aux_vars),
+                    )
+                except (RuntimeError, AttributeError) as e:
+                    vmap_fallback_errors = (
+                        "randomness error mode",
+                        "NestedIntSymNode",
+                        "torch._dynamo",
+                    )
+                    if not any(msg in str(e) for msg in vmap_fallback_errors):
+                        raise
+                    if "torch._dynamo" in str(e):
+                        try:
+                            import importlib
+
+                            import torch._dynamo as torch_dynamo  # type: ignore
+
+                            importlib.reload(torch_dynamo)
+                        except Exception:
+                            pass
+                    warnings.warn(
+                        "Falling back to dense Jacobian computation because vmap failed. "
+                        f"Original error: {e}"
+                    )
+                    jacobians_raw = self._compute_autograd_jacobian(
+                        tuple(v.tensor for v in optim_vars),
+                        self._make_jac_fn(self._tmp_optim_vars, aux_vars),
+                    )
+                    aux_idx = torch.arange(err.shape[0])  # batch_size
+                    jacobians_full = tuple(
+                        jac[aux_idx, :, aux_idx, :] for jac in jacobians_raw
+                    )
         elif self._autograd_mode == AutogradMode.LOOP_BATCH:
             jacobians_raw_loop: List[Tuple[torch.Tensor, ...]] = []
             for n in range(optim_vars[0].shape[0]):

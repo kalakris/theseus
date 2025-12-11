@@ -154,7 +154,14 @@ def test_sparse_mv_cpu(batch_size, num_rows, num_cols, fill):
 @pytest.mark.parametrize("num_cols", [1, 4, 32])
 @pytest.mark.parametrize("fill", [0.1, 0.9])
 def test_sparse_mv_cuda(batch_size, num_rows, num_cols, fill):
-    _check_sparse_mv_and_mtv(batch_size, num_rows, num_cols, fill, "cuda:0")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    try:
+        _check_sparse_mv_and_mtv(batch_size, num_rows, num_cols, fill, "cuda:0")
+    except RuntimeError as e:
+        if "CUDA driver version is insufficient" in str(e):
+            pytest.skip("CUDA driver not available")
+        raise
 
 
 def test_jacobians_check():
