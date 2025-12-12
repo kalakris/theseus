@@ -9,10 +9,8 @@ from ._version import __version__
 
 def _eager_import_torch_dynamo() -> None:
     try:
-        torch_dynamo = importlib.import_module("torch._dynamo")
-        if not hasattr(torch_dynamo, "trace_rules"):
-            importlib.reload(torch_dynamo)
-    except Exception:
+        importlib.import_module("torch._dynamo")
+    except (ImportError, ModuleNotFoundError):
         pass
 
 

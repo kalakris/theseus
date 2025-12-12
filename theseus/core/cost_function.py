@@ -20,6 +20,11 @@ except ModuleNotFoundError:
     from functorch import jacrev, vmap  # type: ignore
 from typing_extensions import Protocol
 
+try:
+    _VMAP_SUPPORTS_RANDOMNESS = "randomness" in inspect.signature(vmap).parameters
+except AttributeError:
+    _VMAP_SUPPORTS_RANDOMNESS = False
+
 from theseus.geometry import Manifold
 from theseus.geometry.lie_group_check import no_lie_group_check
 
@@ -340,9 +345,7 @@ class AutoDiffCostFunction(CostFunction):
         batch_size = max(batch_sizes)
         optim_tensors = _expand_all(optim_tensors, batch_size)
         aux_tensors = _expand_all(aux_tensors, batch_size)
-        vmap_kwargs = (
-            {"randomness": "same"} if "randomness" in inspect.signature(vmap).parameters else {}
-        )
+        vmap_kwargs = {"randomness": "same"} if _VMAP_SUPPORTS_RANDOMNESS else {}
         return vmap(jacrev(jac_fn, argnums=0), **vmap_kwargs)(
             optim_tensors, aux_tensors
         )
@@ -366,22 +369,8 @@ class AutoDiffCostFunction(CostFunction):
                         self._make_jac_fn_vmap(self._tmp_optim_vars, self._tmp_aux_vars),
                     )
                 except (RuntimeError, AttributeError) as e:
-                    vmap_fallback_errors = (
-                        "randomness error mode",
-                        "NestedIntSymNode",
-                        "torch._dynamo",
-                    )
-                    if not any(msg in str(e) for msg in vmap_fallback_errors):
+                    if not _should_fallback_from_vmap(e):
                         raise
-                    if "torch._dynamo" in str(e):
-                        try:
-                            import importlib
-
-                            import torch._dynamo as torch_dynamo  # type: ignore
-
-                            importlib.reload(torch_dynamo)
-                        except Exception:
-                            pass
                     warnings.warn(
                         "Falling back to dense Jacobian computation because vmap failed. "
                         f"Original error: {e}"
@@ -458,3 +447,13 @@ class AutoDiffCostFunction(CostFunction):
         elif self._autograd_mode == AutogradMode.VMAP:
             for var in self._tmp_aux_vars:
                 var.to(*args, **kwargs)
+
+
+def _should_fallback_from_vmap(error: Exception) -> bool:
+    # These substrings correspond to known PyTorch 2.3/3.12 vmap failures.
+    if isinstance(error, AttributeError):
+        return "torch._dynamo" in str(error)
+    if isinstance(error, RuntimeError):
+        known_msgs = ("randomness error mode", "NestedIntSymNode", "torch._dynamo")
+        return any(msg in str(error) for msg in known_msgs)
+    return False
