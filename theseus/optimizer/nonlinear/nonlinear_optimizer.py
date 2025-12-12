@@ -209,7 +209,7 @@ class NonlinearOptimizer(Optimizer, abc.ABC):
 
         converged_indices = self._check_convergence(err, info.last_err)
         info.status[
-            np.array(converged_indices.detach().cpu())
+            converged_indices.detach().cpu().numpy()
         ] = NonlinearOptimizerStatus.CONVERGED
 
     @abc.abstractmethod

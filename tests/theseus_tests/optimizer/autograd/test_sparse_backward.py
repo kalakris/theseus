@@ -62,7 +62,9 @@ def test_sparse_backward_step():
 
 
 def test_float64_used():
-    data = torch.load("tests/theseus_tests/optimizer/autograd/bad_sparse_matrix.pth")
+    data = torch.load(
+        "tests/theseus_tests/optimizer/autograd/bad_sparse_matrix.pth", weights_only=False
+    )
     decomp = analyze_AAt(data["struct"].mock_csc_transpose())
     delta = CholmodSolveFunction.apply(
         data["a"],

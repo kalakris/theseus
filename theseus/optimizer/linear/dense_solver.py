@@ -93,7 +93,7 @@ class DenseSolver(LinearSolver, abc.ABC):
             Atb = self.linearization.Atb
             with torch.no_grad():
                 output = torch.zeros(AtA.shape[0], AtA.shape[1]).to(AtA.device)
-                _, _, infos = torch.lu(AtA, get_infos=True)
+                _, _, infos = torch.linalg.lu_factor_ex(AtA)
                 good_idx = infos.bool().logical_not()
                 if not good_idx.all():
                     warnings.warn(
