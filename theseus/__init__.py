@@ -2,7 +2,19 @@
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
+import importlib
+
 from ._version import __version__
+
+
+def _eager_import_torch_dynamo() -> None:
+    try:
+        importlib.import_module("torch._dynamo")
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+
+_eager_import_torch_dynamo()
 
 from .constants import DeviceType as DeviceType
 from .global_params import set_global_params  # usort: skip
